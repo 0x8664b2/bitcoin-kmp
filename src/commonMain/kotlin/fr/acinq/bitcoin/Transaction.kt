@@ -671,13 +671,18 @@ public data class Transaction(
             signInput(tx, inputIndex, Script.write(previousOutputScript), sighashType, privateKey)
 
         @JvmStatic
-        public fun hashForSigningSchnorr(tx: Transaction, inputIndex: Int, inputs: List<TxOut>, sighashType: Int): ByteVector32 {
+        public fun hashForSigningSchnorr(tx: Transaction, inputIndex: Int, inputs: List<TxOut>, sighashType: Int, sigVersion: Int, annex: ByteVector? = null, tapleafHash: ByteVector32? = null, codeSeparatorPos: Long = 0xFFFFFFFFL): ByteVector32 {
             val out = ByteArrayOutput()
             out.write(0)
             out.write(sighashType)
             val txData = tx.transactionData(inputs, sighashType)
             out.write(txData)
-            out.write(0)
+            val (extFlag, keyVersion) = when(sigVersion) {
+                SigVersion.SIGVERSION_TAPSCRIPT -> Pair(1, 0)
+                else -> Pair(0, 0)
+            }
+            val spendType = 2 * extFlag + (if(annex != null) 1 else 0)
+            out.write(spendType)
             if ((sighashType and 0x80) == SigHash.SIGHASH_ANYONECANPAY) {
                 OutPoint.write(tx.txIn[inputIndex].outPoint, out)
                 writeUInt64(inputs[inputIndex].amount.toULong(), out)
@@ -689,6 +694,11 @@ public data class Transaction(
             if ((sighashType and 3) == SigHash.SIGHASH_SINGLE) {
                 val ser = TxOut.write(tx.txOut[inputIndex])
                 out.write(Crypto.sha256(ser))
+            }
+            if (sigVersion == SigVersion.SIGVERSION_TAPSCRIPT) {
+                out.write(tapleafHash!!.toByteArray())
+                out.write(keyVersion)
+                writeUInt32(codeSeparatorPos.toUInt(), out)
             }
             val preimage = out.toByteArray()
             return Crypto.taggedHash(preimage, "TapSighash")
